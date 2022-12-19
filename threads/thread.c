@@ -25,6 +25,9 @@
    Do not modify this value. */
 #define THREAD_BASIC 0xd42df210
 
+/* Check the tick and global tick to update*/
+#define MIN(a,b) (((a) < (b)) ? (a) : (b))
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -46,7 +49,7 @@ static struct list destruction_req;
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
-static long long global_ticks = LLONG_MAX;
+static long long global_ticks = INT64_MAX;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -111,6 +114,7 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
+	list_init (&sleep_list);
 	list_init (&destruction_req);
 
 	/* Set up a thread structure for the running thread. */
@@ -312,13 +316,44 @@ thread_yield (void) {
 }
 
 void
-thread_awake (void) {
+thread_awake (int64_t ticks) {
+	struct list_elem *curr_e;
+	struct thread *cur_thread;
+	global_ticks = __INT64_MAX__;
+	for (curr_e = list_begin(&sleep_list); curr_e == list_end(&sleep_list);){
+		cur_thread = list_entry(curr_e,struct thread,elem);
+		if (cur_thread->local_ticks <= ticks){
+			curr_e = list_remove(curr_e);
+			thread_unblock(cur_thread);
+		}
+		else{
+			curr_e = list_next(curr_e);
+			global_ticks = MIN(global_ticks, cur_thread->local_ticks);
+		}
+	}
 
 }
 
 void
-thread_sleep (void) {
+thread_sleep (int64_t ticks) {
+	struct thread *curr = thread_current ();
+	enum intr_level old_level;
 
+	ASSERT (!intr_context ());
+
+	old_level = intr_disable ();
+	if (curr != idle_thread)
+		list_push_back (&sleep_list, &curr->elem);
+		curr->local_ticks = ticks;
+		global_ticks = MIN(global_ticks,ticks);
+	do_schedule (THREAD_BLOCKED);
+
+	intr_set_level (old_level);
+}
+
+int
+get_global_tick (){
+	return global_ticks;
 }
 
 void
