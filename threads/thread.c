@@ -68,6 +68,8 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+bool cmp_priority(struct list_elem *cmp1, struct list_elem *cmp2, void *aux);
+void test_max_priority(void);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -211,8 +213,13 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+
 	/* Add to run queue. */
 	thread_unblock (t);
+	// if (thread_get_priority() < priority){
+	// 	thread_yield();
+	// }
+	test_max_priority();
 
 	return tid;
 }
@@ -247,7 +254,8 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	// list_push_back (&ready_list, &t->elem);
+	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -310,7 +318,8 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		// list_push_back (&ready_list, &curr->elem);
+		list_insert_ordered (&ready_list, &curr->elem, cmp_priority, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -320,7 +329,7 @@ thread_awake (int64_t ticks) {
 	struct list_elem *curr_e;
 	struct thread *cur_thread;
 	global_ticks = __INT64_MAX__;
-	for (curr_e = list_begin(&sleep_list); curr_e == list_end(&sleep_list);){
+	for (curr_e = list_begin(&sleep_list); curr_e != list_end(&sleep_list);){
 		cur_thread = list_entry(curr_e,struct thread,elem);
 		if (cur_thread->local_ticks <= ticks){
 			curr_e = list_remove(curr_e);
@@ -365,12 +374,40 @@ update_next_global_tick (){
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
+	test_max_priority();
+}
+
+void test_max_priority(void){
+	struct list_elem *elem1;
+	struct thread *t;
+	int curr_priority;
+	if (list_empty(&ready_list)){
+		return;
+	}
+	elem1 = list_front(&ready_list);
+	curr_priority = thread_get_priority();
+	t = list_entry(elem1, struct thread, elem);
+	if (curr_priority < t->priority){
+		thread_yield();
+	}
+
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) {
 	return thread_current ()->priority;
+}
+
+/* Compare the priority of cmp1 and cmp2. return when cmp1 is bigger than cmp2 */
+bool
+cmp_priority(struct list_elem *cmp1, struct list_elem *cmp2, void *aux){
+	struct thread *one = list_entry(cmp1, struct thread, elem);
+	struct thread *two = list_entry(cmp2, struct thread, elem);
+	if (one->priority > two->priority)
+		return 1;
+	else
+		return 0;
 }
 
 /* Sets the current thread's nice value to NICE. */
