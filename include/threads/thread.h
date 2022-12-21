@@ -142,6 +142,8 @@ int get_global_tick (void);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+void test_max_priority(void);
+bool cmp_priority(struct list_elem *cmp1, struct list_elem *cmp2, void *aux);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
