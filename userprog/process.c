@@ -42,6 +42,7 @@ tid_t
 process_create_initd (const char *file_name) {
 	char *fn_copy;
 	tid_t tid;
+	char * save_str;
 
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
@@ -49,6 +50,10 @@ process_create_initd (const char *file_name) {
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
+	// strlcpy(char * dest, const char * src, size_t size) : 문자열을 복사해주는 함수
+	// size는 src의 길이 이하일때 이용되는 녀석 => size보다 큰 값을 넣어주면 src 값에 맞춰서 복사됨
+
+	file_name = strtok_r(file_name, " ",&save_str);
 
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
@@ -184,6 +189,10 @@ process_exec (void *f_name) {
 	if (!success)
 		return -1;
 
+	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
+	//hex_dump(offset[어디서 부터 메모리를 찍을지 표시], data[어떤 데이터를 메모리에 덮어씌울껀지]
+	//, size[얼만큼 사이즈를 표시할것인지], ASCII 표시 여부);
+
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
@@ -204,6 +213,12 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	// while (1) {
+	// 	;
+	// }
+	for(int i = 0; i < 100000000; i++)
+		;
+	
 	return -1;
 }
 
@@ -215,7 +230,6 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-
 	process_cleanup ();
 }
 
@@ -329,14 +343,28 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	//Argument Passing
+	char *arg_list[128];
+	char *token, *save_ptr;
+	int token_count = 0;
+
+	token = strtok_r(file_name," ",&save_ptr);
+	arg_list[token_count] = token;
+
+	while (token != NULL){ 		
+		token = strtok_r(NULL," ",&save_ptr);
+		token_count++;
+		arg_list[token_count] = token;
+	}
+
 	/* Allocate and activate page directory. */
-	t->pml4 = pml4_create ();
+	t->pml4 = pml4_create (); // 페이지 디렉토리 생성
 	if (t->pml4 == NULL)
 		goto done;
-	process_activate (thread_current ());
+	process_activate (thread_current ()); //페이지 테이블 활성화
 
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open (file_name); //프로그램 파일 Open
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
@@ -416,7 +444,8 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
-
+	 argument_stack(arg_list, token_count, if_);
+	
 	success = true;
 
 done:
@@ -425,6 +454,53 @@ done:
 	return success;
 }
 
+void
+argument_stack(char **argv, int argc, struct intr_frame *if_){
+	char *arg_address[128];
+
+	// 거꾸로 삽입 => 스택은 반대 방향으로 확장
+
+	/* 맨 끝 NULL 값 제외하고 스택에 저장 */
+	for(int i = argc - 1; i >= 0; i--){
+		int argv_len = strlen(argv[i]);
+
+		/* 
+		if_->rsp: 현재 user stack에서 현재 위치를 가리키는 스택 포인터.
+		각 인자에서 인자 크기(argv_len)를 읽고 (이때 각 인자에 sentinel이 포함되어 있으니 +1 - strlen에서는 sentinel 빼고 읽음)
+		그 크기만큼 rsp를 내려준다. 그 다음 빈 공간만큼 memcpy를 해준다.
+		 */
+		if_->rsp = if_->rsp - (argv_len + 1);
+		memcpy((void *) if_->rsp, argv[i], argv_len+1);
+		arg_address[i] = if_->rsp;
+	}
+
+	/* word-align: 8의 배수 맞추기 위해 padding 삽입*/
+	while (if_->rsp % 8 != 0) {
+		if_->rsp--; // 주소값 1 내리기
+		* (uint8_t *)if_->rsp = 0; // 0 값 으로 패팅
+	}
+
+	//데이터들의 주소값을 삽입
+
+	//NULL 값을 삽입
+	if_->rsp = if_->rsp - 8;
+	memset((void *) if_->rsp, 0,sizeof(char **));
+
+    //실제 주소값 삽입
+	for(int i = argc - 1; i >= 0; i--){
+		if_->rsp = if_->rsp - 8;
+		
+		memcpy((void *) if_->rsp, &arg_address[i], sizeof(char**));
+	}
+
+	if_->R.rdi = argc; //rdi : 1st argument
+	/* fake return address 위의 첫번째 agv address 를 가리키는 값을 저장 */
+	if_->R.rsi = if_->rsp;  //rsi : 2nd argument
+
+	/* fake return address */
+	if_->rsp = if_->rsp - 8; /* void point : 8byte */
+	memset((void *) if_->rsp, 0, sizeof(void *));
+}
 
 /* Checks whether PHDR describes a valid, loadable segment in
  * FILE and returns true if so, false otherwise. */
