@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -29,7 +30,8 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 #define FDT_PAGES 3
-#define FDT_COUNT_LIMIT FDT_PAGES *(1<<9) // limit fdidx
+// #define FDT_COUNT_LIMIT FDT_PAGES *(1<<9) // limit fdidx
+#define FDT_COUNT_LIMIT FDT_PAGES *(130) // limit fdidx
 
 /* A kernel thread or user process.
  *
@@ -114,6 +116,8 @@ struct thread {
 	int exit_status;
 	struct file **file_descriptor_table; //FDT
 	int fdidx; // fd index
+
+	struct file *running_file;			// SJ, 현재 쓰레드가 사용 중인 파일
 	
 	/* Owned by thread.c. */
 	struct intr_frame tf;               /* Information for switching */
@@ -125,6 +129,14 @@ struct thread {
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem d_elem; // 도네이션 element
+
+	struct list child_list; // _fork(), wait() 구현 때 사용
+    struct list_elem child_elem; // _fork(), _wait() 구현 때 사용
+    struct intr_frame parent_if; // _fork() 구현 때 사용, __do_fork() 함수
+
+	struct semaphore fork_sema;
+	struct semaphore wait_sema;
+	struct semaphore free_sema;
 };
 
 /* If false (default), use round-robin scheduler.

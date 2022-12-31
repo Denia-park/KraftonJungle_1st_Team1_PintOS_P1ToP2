@@ -3,6 +3,7 @@
 #include "filesys/file.h"
 #include "devices/input.h"
 #include <stdio.h>
+#include <string.h>
 #include <syscall-nr.h>
 #include "threads/init.h"
 #include "threads/synch.h"
@@ -12,6 +13,8 @@
 #include "userprog/gdt.h"
 #include "threads/flags.h"
 #include "intrinsic.h"
+#include "threads/palloc.h"
+#include "userprog/process.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -79,15 +82,17 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		case SYS_EXIT:
 			exit(f->R.rdi);
 			break;
-		// case SYS_FORK:
-		// 	fork(f->R.rdi);	
-			// break;	
-		// case SYS_EXEC:
-		// 	exec(f->R.rdi);
-			// break;
-		// case SYS_WAIT:
-		// 	wait(f->R.rdi);
-			// break;
+		case SYS_FORK:
+			f->R.rax = fork(f->R.rdi, f);	
+			break;	
+		case SYS_EXEC:
+			if (exec((char *)f->R.rdi) == -1) {
+				exit(-1);
+			}
+			break;
+		case SYS_WAIT:
+			f->R.rax = process_wait(f->R.rdi);
+			break;
 		case SYS_CREATE:
 			f->R.rax = create((char *) f->R.rdi, f->R.rsi);		
 			break;
@@ -107,7 +112,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f->R.rax = write(f->R.rdi, (void *) f->R.rsi, f->R.rdx);
 			break;		
 		case SYS_SEEK:
-			seek(f->R.rdi, f->R.rdx);
+			seek(f->R.rdi, f->R.rsi);
 			break;		
 		case SYS_TELL:
 			f->R.rax = tell(f->R.rdi);	
@@ -119,8 +124,6 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			thread_exit ();
 			break;
 	}
-	// printf ("system call! : %d \n", sys_number);
-	// thread_exit ();
 }
 
 void
@@ -136,20 +139,31 @@ exit (int status) {
 	thread_exit();
 }
 
-// pid_t
-// fork (const char *thread_name){
-// 	return (pid_t) syscall1 (SYS_FORK, thread_name);
-// }
+// 현재 프로세스를 cmd_line에서 지정된 인수를 전달하여 이름이 지정된 실행 파일로 변경
+int 
+exec(char *file_name) {
+	check_address(file_name);
 
-// int
-// exec (const char *file) {
-// 	return (pid_t) syscall1 (SYS_EXEC, file);
-// }
+	int name_length = strlen(file_name) + 1; //Null 포함
+	char *fn_copy = palloc_get_page(PAL_ZERO);
+	if (fn_copy == NULL) {
+		exit(-1);
+	}
 
-// int
-// wait (pid_t pid) {
-// 	return syscall1 (SYS_WAIT, pid);
-// }
+	strlcpy(fn_copy, file_name, name_length);
+
+	if (process_exec(fn_copy) == -1) {
+		return -1;
+	}
+
+	NOT_REACHED();
+	return 0;
+}
+
+pid_t
+fork (const char *thread_name, struct intr_frame *f){
+	return process_fork(thread_name, f);
+}
 
 bool
 create (const char *file_name, unsigned initial_size) {
@@ -300,25 +314,25 @@ write (int fd, const void *buffer, unsigned size) {
 
 void
 seek (int fd, unsigned position) {
+	struct file *file = fd_to_struct_filep(fd);
+
 	//std in , out 을 지칭하면 바로 return
-	if (fd < 2) {
+	if (file == NULL || fd < 2) {
 		return;
 	}
-
-	struct file *file = fd_to_struct_filep(fd);
-	check_address((void *) file);
 
 	file_seek(file, position);
 }
 
 unsigned
 tell (int fd) {
+	struct file *file = fd_to_struct_filep(fd);
+
 	//std in , out 을 지칭하면 바로 return
-	if (fd <2) {
-		return 0;
+	if (file == NULL || fd < 2) {
+		return;
 	}
 
-	struct file *file = fd_to_struct_filep(fd);
 	check_address((void *) file);
 
 	return file_tell(file);
@@ -326,69 +340,15 @@ tell (int fd) {
 
 void
 close (int fd) {
-		//std in , out 을 지칭하면 바로 return
-	if (fd <2) {
+	struct file *file = fd_to_struct_filep(fd);
+
+	//std in , out 을 지칭하면 바로 return
+	if (file == NULL || fd < 2) {
 		return;
 	}
 
-	struct file *file = fd_to_struct_filep(fd);
 	make_fd_to_null(fd);
 
 	file_close(file);
 }
-
-// int
-// dup2 (int oldfd, int newfd){
-// 	return syscall2 (SYS_DUP2, oldfd, newfd);
-// }
-
-// void *
-// mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
-// 	return (void *) syscall5 (SYS_MMAP, addr, length, writable, fd, offset);
-// }
-
-// void
-// munmap (void *addr) {
-// 	syscall1 (SYS_MUNMAP, addr);
-// }
-
-// bool
-// chdir (const char *dir) {
-// 	return syscall1 (SYS_CHDIR, dir);
-// }
-
-// bool
-// mkdir (const char *dir) {
-// 	return syscall1 (SYS_MKDIR, dir);
-// }
-
-// bool
-// readdir (int fd, char name[READDIR_MAX_LEN + 1]) {
-// 	return syscall2 (SYS_READDIR, fd, name);
-// }
-
-// bool
-// isdir (int fd) {
-// 	return syscall1 (SYS_ISDIR, fd);
-// }
-
-// int
-// inumber (int fd) {
-// 	return syscall1 (SYS_INUMBER, fd);
-// }
-
-// int
-// symlink (const char* target, const char* linkpath) {
-// 	return syscall2 (SYS_SYMLINK, target, linkpath);
-// }
-
-// int
-// mount (const char *path, int chan_no, int dev_no) {
-// 	return syscall3 (SYS_MOUNT, path, chan_no, dev_no);
-// }
-
-// int
-// umount (const char *path) {
-// 	return syscall1 (SYS_UMOUNT, path);
-// }
 

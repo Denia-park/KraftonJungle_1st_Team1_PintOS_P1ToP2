@@ -224,6 +224,9 @@ thread_create (const char *name, int priority,
 	t->file_descriptor_table[0] = 1; // stdin 자리: 1 배정 , 그냥 더미 값
 	t->file_descriptor_table[1] = 2; // stdout 자리: 2 배정 , 그냥 더미 값
 
+	// SJ, 현재 쓰레드는 부모 쓰레드이다. 부모 쓰레드의 자식 리스트에, 지금 만들고 있는 쓰레드(자식 쓰레드)를 추가한다.
+	list_push_back(&thread_current()->child_list, &t->child_elem); 
+
 	thread_unblock (t);
 	/* create 후 ready_list에 add 시 new thread와 current thread의 우선순위 비교, 
 	만약 새로운 쓰레드의 우선순위가 더 높으면 schedule 호출하고 현재 쓰레드는 yield */
@@ -496,6 +499,12 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->wait_on_lock = NULL;
 	list_init(&t->donation_list); 
 
+	list_init(&t->child_list);
+	sema_init(&t->fork_sema, 0 );
+	sema_init(&t->wait_sema, 0);
+	sema_init(&t->free_sema, 0);
+
+	t->running_file = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
